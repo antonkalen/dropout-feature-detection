@@ -1,0 +1,176 @@
+---
+title: "Dropout logistic regression"
+author: "Anton Kalén"
+date: "`r Sys.Date()`"
+output:
+  bookdown::html_document2:
+    code_folding: hide
+bibliography: references.bib
+---
+
+```{r setup, include=FALSE}
+
+# Set options
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+options(mc.cores = parallel::detectCores())
+
+# Load packages
+library(readr)
+library(here)
+library(dplyr)
+library(rstanarm)
+library(loo)
+library(projpred)
+library(tidyr)
+library(bayestestR)
+library(bayesplot)
+
+# Load data
+dropout_data <- read_csv2(here("data", "DO.csv")) %>% 
+  transmute(
+    dropout = factor(DO, 0:1, c("no dropout", "dropout")),
+    age = Age,
+    gender = factor(Gender, 1:2, c("male", "female")),
+    other_sports = Other_Sport,
+    injury_previous_season = factor(Injury_previous_season, 1:2, c("yes", "no")),
+    socioeconomic = Socioeconomic,
+    intrinsic = Inrinsic,
+    ide = IDE,
+    int = INT,
+    ext = EXT,
+    amot = AMOT,
+    aut_supp = AutSupp
+  ) %>% 
+  drop_na()
+
+dropout_std <- dropout_data %>% 
+  mutate(across(where(is.numeric), scale))
+
+```
+
+## Method
+
+We fit all models with 4000 sampling iterations over 4 cores. If nothing else is specified, default weakly informative priors are used. Plots show 80% and 95% CI.
+
+## Full model
+
+We first fit a full model with all potential predictors together. We can see clear effects for:
+
+-   age
+-   gender
+-   intrinsic
+-   autonomy support
+
+```{r}
+full_model <- stan_glm(
+  dropout ~ 1 +
+    age + 
+    gender + 
+    other_sports + 
+    injury_previous_season + 
+    socioeconomic + 
+    intrinsic + 
+    ide + 
+    int + 
+    ext + 
+    amot + 
+    aut_supp,
+  data = dropout_std,
+  chains = 4,
+  iter = 2000,
+  cores = 4,
+  family = binomial(link = "logit")
+)
+
+plot(full_model, prob = 0.8, prob_outer = .95)
+```
+
+```{r}
+describe_posterior(full_model, ci = c(.89)) %>% 
+  insight::print_md()
+```
+
+
+## Horseshoe prior
+
+<!-- We now use a horseshoe prior to provide shrinkage to only select a small number of relevant covariates. We set the expected number of relevant parameters to 3. The horseshoe prior as regularization is further explained in [@piironen2017]. We can see bellow that the only clearly relevant parameter that remains is age. -->
+
+```{r}
+# p <- 11
+# n <- nrow(dropout_data)
+# p0 <- 3 # prior guess for the number of relevant variables
+# tau0 <- p0/(p-p0) * 1/sqrt(n)
+# hs_prior <- hs(df=1, global_df=1, global_scale=tau0)
+# t_prior <- student_t(df = 7, location = 0, scale = 2.5)
+# 
+# hs_model <- update(full_model, prior = hs_prior)
+# 
+# plot(hs_model, prob = 0.8, prob_outer = .95)
+```
+
+## Projection predictive variable selection
+
+Next, we use projection predictive variable selection to select relevant parameters. The selection is done using the [\`projpred\`](https://mc-stan.org/projpred/)-package, and is described in [@piironen2020; @piironen2016].
+
+Below we see the order of the variables (by importance):
+
+```{r, cache=TRUE}
+full_model_cvvs <- cv_varsel(full_model, method = "L1")
+solution_terms(full_model_cvvs)
+```
+
+In the plot below, we can see an improvement in predictive performance going up to 3 predictors. More than 3 does not seem to improve the predictive performance.
+
+```{r}
+plot(full_model_cvvs, stats = c('elpd', 'rmse'))
+```
+
+We confirm this by looking at the suggested number of parameters.
+
+```{r}
+(nv <- suggest_size(full_model_cvvs, alpha=0.95))
+```
+
+Below we see the posterior estimates of the selected model.
+
+```{r}
+final_model <- stan_glm(
+  dropout ~ 1 +
+    amot +
+    aut_supp +
+    ide,
+  data = dropout_std,
+  chains = 4,
+  iter = 2000,
+  cores = 4,
+  family = binomial(link = "logit")
+)
+bayestestR::describe_posterior(final_model, ci = c(.89)) %>% 
+  insight::print_md()
+```
+
+Confusion matrix (classification table) for the final model of 4. Using the proportion of dropouts in the original data as cuttoff. Its probably possible to increase the accuracy using some cutoff detection technique (i.e. ROC-curves etc). This however increases the risk of overfitting the data, and we should in that case use leave one out cross validation to test the robustness of the model.
+
+```{r}
+final_predict <- predict(final_model, dropout_std, type = "response")
+
+
+final_predict_class <- factor(if_else(final_predict >= mean(as.integer(dropout_std$dropout) - 1), "dropout", "no dropout"))
+
+caret::confusionMatrix(final_predict_class, dropout_std$dropout, positive = "dropout")
+
+```
+
+
+
+Confusion matrix (classification table) for the full model. Using the proportion of dropouts in the original data as cuttoff.
+
+```{r}
+full_predict <- predict(full_model, dropout_std, type = "response")
+
+
+full_predict_class <- factor(if_else(full_predict >= mean(as.integer(dropout_std$dropout) - 1), "dropout", "no dropout"))
+
+caret::confusionMatrix(full_predict_class, dropout_std$dropout, positive = "dropout")
+
+```
