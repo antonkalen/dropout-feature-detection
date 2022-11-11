@@ -62,19 +62,34 @@ We first fit a full model with all potential predictors together. We can see cle
 -   autonomy support
 
 ```{r}
+formula <- as.formula(dropout ~ 1 +
+    age + age:gender + age:other_sports + age:injury_previous_season + 
+      age:socioeconomic + age:intrinsic + age:ide + age:int + age:ext +
+      age:amot + age:aut_supp +
+    gender + gender:other_sports + gender:injury_previous_season + 
+      gender:socioeconomic + gender:intrinsic + gender:ide + gender:int + 
+      gender:ext + gender:amot + gender:aut_supp +
+    other_sports + other_sports:injury_previous_season + 
+      other_sports:socioeconomic + other_sports:intrinsic + other_sports:ide +
+      other_sports:int + other_sports:ext + other_sports:amot + 
+      other_sports:aut_supp +
+    injury_previous_season + injury_previous_season:socioeconomic +
+      injury_previous_season:intrinsic + injury_previous_season:ide +
+      injury_previous_season:int + injury_previous_season:ext + 
+      injury_previous_season:amot + injury_previous_season:aut_supp +
+    socioeconomic + socioeconomic:intrinsic + socioeconomic:ide +
+      socioeconomic:int + socioeconomic:ext + socioeconomic:amot + 
+      socioeconomic:aut_supp +
+    intrinsic + intrinsic:ide + intrinsic:int + intrinsic:ext + intrinsic:amot +
+      intrinsic:aut_supp +
+    ide + ide:int + ide:ext + ide:amot + ide:aut_supp +
+    int + int:ext + int:amot + int:aut_supp +
+    ext + ext:amot + ext:aut_supp +
+    amot + amot:aut_supp +
+    aut_supp)
+
 full_model <- stan_glm(
-  dropout ~ 1 +
-    age + 
-    gender + 
-    other_sports + 
-    injury_previous_season + 
-    socioeconomic + 
-    intrinsic + 
-    ide + 
-    int + 
-    ext + 
-    amot + 
-    aut_supp,
+  formula,
   data = dropout_std,
   chains = 4,
   iter = 2000,
@@ -86,14 +101,14 @@ plot(full_model, prob = 0.8, prob_outer = .95)
 ```
 
 ```{r}
-describe_posterior(full_model, ci = c(.89)) %>% 
+describe_posterior(full_model, ci = c(.95), test = c("p_direction")) %>% 
   insight::print_md()
 ```
 
 
 ## Horseshoe prior
 
-<!-- We now use a horseshoe prior to provide shrinkage to only select a small number of relevant covariates. We set the expected number of relevant parameters to 3. The horseshoe prior as regularization is further explained in [@piironen2017]. We can see bellow that the only clearly relevant parameter that remains is age. -->
+We now use a horseshoe prior to provide shrinkage to only select a small number of relevant covariates. We set the expected number of relevant parameters to 3. The horseshoe prior as regularization is further explained in [@piironen2017]. We can see bellow that the only clearly relevant parameter that remains is age.
 
 ```{r}
 # p <- 11
@@ -112,9 +127,25 @@ describe_posterior(full_model, ci = c(.89)) %>%
 
 Next, we use projection predictive variable selection to select relevant parameters. The selection is done using the [\`projpred\`](https://mc-stan.org/projpred/)-package, and is described in [@piironen2020; @piironen2016].
 
+<!-- We now use a horseshoe prior to provide shrinkage to only select a small number of relevant covariates. We set the expected number of relevant parameters to 5. The horseshoe prior as regularization is further explained in [@piironen2017]. -->
+
+```{r}
+# p <- 11
+# n <- nrow(dropout_data)
+# p0 <- 3 # prior guess for the number of relevant variables
+# tau0 <- p0/(p-p0) * 1/sqrt(n)
+# hs_prior <- hs(df=1, global_df=1, global_scale=tau0)
+# t_prior <- student_t(df = 7, location = 0, scale = 2.5)
+# 
+# hs_model <- update(full_model, prior = hs_prior)
+# 
+# plot(hs_model, prob = 0.8, prob_outer = .95)
+```
+
+
 Below we see the order of the variables (by importance):
 
-```{r, cache=TRUE}
+```{r}
 full_model_cvvs <- cv_varsel(full_model, method = "L1")
 solution_terms(full_model_cvvs)
 ```
